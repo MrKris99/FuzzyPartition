@@ -86,21 +86,6 @@ class SettingsWidget(QWidget):
 
     def _buildSettingsLayout(self):
 
-        #------------------------------------Gray scale------------------------------------#
-
-        grayScaleLabel          = QLabel(text='Gray color')
-        self._grayScaleCheckbox = QCheckBox()
-
-        grayScaleLayout = QHBoxLayout()
-        grayScaleLayout.addWidget(grayScaleLabel)
-        grayScaleLayout.addWidget(self._grayScaleCheckbox)
-
-        grayScaleLayout.setAlignment(Qt.AlignRight)
-
-        self._grayScaleCheckbox.stateChanged.connect(self._boardWidget.toGrayScale)
-
-        #-----------------------------------------------------------------------------------#
-
         #------------------------------------Distance options------------------------------------#
 
         self._distanceOptions = QComboBox()
@@ -169,7 +154,6 @@ class SettingsWidget(QWidget):
         spacer = QSpacerItem(40, 40, QSizePolicy.Expanding, QSizePolicy.Minimum)
 
         settingsLayout = QVBoxLayout()
-        settingsLayout.addLayout(grayScaleLayout)
         settingsLayout.addLayout(partitionLayout)
         settingsLayout.addLayout(distanceLayout)
         settingsLayout.addLayout(confidenceLayout)
@@ -208,9 +192,6 @@ class SettingsWidget(QWidget):
     def centersNumber(self):
         return int(self._centersCountInput.text()) if self._centersCountInput.text() else 1
 
-    def grayScale(self):
-        return self._grayScaleCheckbox.isChecked()
-
 class PartitionCentralWidget(QWidget):
 
     def __init__(self, boardWidget, settingsWidget, *args, **kwargs):
@@ -220,7 +201,10 @@ class PartitionCentralWidget(QWidget):
         self._settingsWidget = settingsWidget
 
         self._startPartitionButton = QPushButton('Start Partition')
+        self._paintGrayScale = QPushButton('Paint as grayscale')
+        self._paintGrayScale.setEnabled(False)
         self._startPartitionButton.clicked.connect(self._onStartPartitionButtonClicked)
+        self._paintGrayScale.clicked.connect(self._onPaintGrayScaleButtonClicked)
 
         self._splitter = QSplitter(Qt.Horizontal)
         self._splitter.addWidget(self._boardWidget)
@@ -229,36 +213,47 @@ class PartitionCentralWidget(QWidget):
         mainLayout = QVBoxLayout()
         mainLayout.addWidget(self._splitter)
         mainLayout.addWidget(self._startPartitionButton)
+        mainLayout.addWidget(self._paintGrayScale)
 
         self.setLayout(mainLayout)
 
     @Slot()
     def _onStartPartitionButtonClicked(self):
+        self._startPartitionButton.setEnabled(False)
         partitionAlgorithm = self._settingsWidget.partitionAlgorithm()
 
         if 'simple' in partitionAlgorithm.lower():
             self._boardWidget.startSimplePartition(
-                self._settingsWidget.distance(), self._settingsWidget.freeCoefficients(), self._settingsWidget.grayScale())
+                self._settingsWidget.distance(), self._settingsWidget.freeCoefficients())
         elif 'centers' in partitionAlgorithm.lower():
             self._boardWidget.startFuzzyPartitionNotFixedCenters(
                 self._settingsWidget.distance(), 
                 self._settingsWidget.confidence(), 
                 self._settingsWidget.centersNumber(),
-                self._settingsWidget.precision(),
-                self._settingsWidget.grayScale())
+                self._settingsWidget.precision())
         else:
             self._boardWidget.startFuzzyPartition(
                 self._settingsWidget.distance(), 
                 self._settingsWidget.confidence(), 
                 self._settingsWidget.freeCoefficients(),
-                self._settingsWidget.precision(),
-                self._settingsWidget.grayScale())
+                self._settingsWidget.precision())
 
+        self._startPartitionButton.setEnabled(True)
+        self._paintGrayScale.setEnabled(True)
+
+    @Slot()
+    def _onPaintGrayScaleButtonClicked(self):
+        self._paintGrayScale.setEnabled(False)
+        self._startPartitionButton.setEnabled(False)
+        self._boardWidget.toGrayScale()
+        self._startPartitionButton.setEnabled(True)
 
 class BoardWidget(QWidget):
 
     CELL_CENTER_COLOR = Qt.black
     CELL_SIMPLE_COLOR = Qt.white
+    CELL_SIMPLE_GRAY_COLOR = Qt.gray
+    CELL_BOUNDS_COLOR = Qt.black
 
     def __init__(self, size, cellSize, application, statusBarWidget, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -292,14 +287,50 @@ class BoardWidget(QWidget):
 
         return False
 
-    def toGrayScale(self, state):
-        for point in self._board.values():
-            if not point.isCenter:
-                if state == Qt.Checked:
-                    point.previousColor = point.color
-                    point.color         = ColorManager.ToGrayScale(point.color) 
-                else:
-                    point.color = point.previousColor
+    def getExtraneousAdjecements(self, x, y):
+        adjecements = []
+        if (x < self._cellSize or x + self._cellSize >= self._windowSize):
+            return adjecements
+        if (y < self._cellSize or y + self._cellSize >= self._windowSize):
+            return adjecements
+        if (self._board[(x, y)].color == self.CELL_BOUNDS_COLOR):
+            return adjecements
+
+        checkedColor = self._board[(x, y)].color
+        for xDelta in [0, self._cellSize, -self._cellSize]:
+            for yDelta in [0, self._cellSize, -self._cellSize]:
+                candidate = self._board[(x + xDelta, y + yDelta)];
+                if (candidate.previousColor != checkedColor and candidate.color != self.CELL_BOUNDS_COLOR):
+                    adjecements.append((x + xDelta, y + yDelta))
+        return adjecements
+
+    def forEachPoint(self, callback):
+        for x in range(0, self._windowSize, self._cellSize):
+            for y in range(0, self._windowSize, self._cellSize):
+                callback(x, y)
+
+    def savePrevColorAndGrayifyNeutralCells(self, x, y):
+        self._board[(x, y)].previousColor = self._board[(x, y)].color
+        if (self._board[(x, y)].color == self.CELL_SIMPLE_COLOR):
+            self._board[(x, y)].color = self.CELL_SIMPLE_GRAY_COLOR
+
+    def markBoundsAsBlack(self, x, y):
+        adjecements = self.getExtraneousAdjecements(x, y)
+        for point in adjecements:
+            if (self._board[point].color != self.CELL_SIMPLE_GRAY_COLOR):
+                self._board[point].color = self.CELL_BOUNDS_COLOR
+
+    def markRelatedPointAsWhite(self, x, y):
+        if (self._board[(x, y)].color != self.CELL_SIMPLE_GRAY_COLOR and self._board[(x, y)].color != self.CELL_BOUNDS_COLOR):
+            self._board[(x, y)].color = self.CELL_SIMPLE_COLOR
+
+    def toGrayScale(self):
+        self.forEachPoint(self.savePrevColorAndGrayifyNeutralCells)
+        self._application.processEvents()
+        self.forEachPoint(self.markBoundsAsBlack)
+        self._application.processEvents()
+        self.forEachPoint(self.markRelatedPointAsWhite)
+        self._application.processEvents()
 
     def startSimplePartition(self, distance, freeCoefficients, grayScale=False):
         self._clearBoard()
@@ -317,12 +348,16 @@ class BoardWidget(QWidget):
 
         colors = dict(zip(centers, ColorManager.GetRandomColors(len(centers))))
 
+        pointCounter = 0;
         for point, center in partition.calculatePartition(distance):
             if center:
-                self._board[point].color = ColorManager.ToGrayScale(colors[center]) if grayScale else colors[center]
-
-            self._application.processEvents()
-
+                self._board[point].color = colors[center]
+                pointCounter += 1;
+            if (pointCounter % 20 == 0):
+                self._application.processEvents()
+ 
+        self._application.processEvents()
+ 
     def startFuzzyPartition(self, distance, confidenceDeegre, freeCoefficients, precision, grayScale=False):
         self._clearBoard()
 
@@ -338,49 +373,19 @@ class BoardWidget(QWidget):
             board, centers, SeriesStepFunction(25), confidenceDeegre, freeCoefficients, precision)
 
         colors = dict(zip(centers, ColorManager.GetRandomColors(len(centers))))
-    
+
+        pointCounter = 0;
         for point, center, _ in partition.calculatePartition(distance):
             if center:
-                self._board[point].color = ColorManager.ToGrayScale(colors[center]) if grayScale else colors[center]
+                self._board[point].color = colors[center]
+                pointCounter += 1;
+            if (pointCounter % 20 == 0):
+                self._application.processEvents()
 
-            self._application.processEvents()
+        self._application.processEvents()
 
     def startFuzzyPartitionNotFixedCenters(self, distance, confidenceDeegre, centersCount, precision, grayScale=False):
-        self._clearBoard()
-
-        board = [
-            point for point in self._board.keys()
-        ]
-
-        startCenters = [(100, 100)] * centersCount
-
-        for point in startCenters:
-            self._board[point].color = Qt.red
-            self._application.processEvents()
-
-        partition = FuzzyPartitionWithNotFixedCentersAlgorithm(
-            board, centersCount, SeriesStepFunction(25), confidenceDeegre, None, precision)
-
-        for newBoard in partition.calculatePartition(distance, startCenters):
-            self._clearBoard()
-
-            centers = set()
-
-            for point in newBoard:
-                if newBoard[point].center:
-                    centers.add(newBoard[point].center)
-
-            centers = list(centers)
-            colors  = dict(zip(centers, ColorManager.GetRandomColors(len(centers))))
-
-            for point in newBoard:
-                if newBoard[point].center:
-                    self._board[point].color = colors[newBoard[point].center]
-
-                    if point in centers:
-                        self._board[point].color = Qt.red
-
-                self._application.processEvents()
+        return
 
     def _toogleCenter(self, cell):
         cell.isCenter = not cell.isCenter
@@ -391,7 +396,7 @@ class BoardWidget(QWidget):
             if not cell.isCenter:
                 cell.color = self.CELL_SIMPLE_COLOR
 
-    
+
 if __name__ == '__main__':
     application = QApplication(sys.argv)
 
