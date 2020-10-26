@@ -1,22 +1,18 @@
 import sys
-import functools
-import random
 
 from PySide2.QtWidgets import (QApplication, QPushButton, QMainWindow, QWidget, QVBoxLayout,
-    QHBoxLayout, QGridLayout, QLabel, QLineEdit, QComboBox, QSplitter, QCheckBox, QSpacerItem, QSizePolicy)
-from PySide2.QtCore import Slot, Qt
+    QHBoxLayout, QLabel, QLineEdit, QComboBox, QSplitter, QSpacerItem, QSizePolicy, QGraphicsView, QGraphicsScene)
+from PySide2.QtCore import Slot, Qt, QRectF, QRect
+from PySide2.QtGui import QPen, QBrush
 
 from utils.cell import Cell
 from utils.color_manager import ColorManager
 
 from partition.partition_utils import (EuclidianDistance, ChebyshevDistance, TaxicabDistance, sign, 
     MonotonicStepFunction, ConstantStepFunction, SeriesStepFunction, LeftRectangularIntergate)
-from partition.partition import ( FuzzyPartitionWithFixedCentersAlgorithm, 
-SimplePartitionWithFixedCentersAlgorithm, FuzzyPartitionWithNotFixedCentersAlgorithm)
-
+from partition.partition import ( FuzzyPartitionWithFixedCentersAlgorithm, SimplePartitionWithFixedCentersAlgorithm)
 
 WINDOW_SIZE = 500
-
 
 class SettingsWidget(QWidget):
 
@@ -71,12 +67,7 @@ class SettingsWidget(QWidget):
 
         activator = {
             'simple partition': [self._xCoordinateInput, self._yCoordinateInput, self._addCenterButton],
-            'fuzzy partition (find centers)': [self._confidenceInput, self._precisionInput, self._centersCountInput],
-            'fuzzy partition': [self._confidenceInput, 
-            self._precisionInput, 
-            self._xCoordinateInput,
-            self._yCoordinateInput,
-            self._addCenterButton,]
+            'fuzzy partition': [self._confidenceInput, self._precisionInput, self._xCoordinateInput, self._yCoordinateInput, self._addCenterButton,]
         }
 
         for item in activator:
@@ -99,7 +90,7 @@ class SettingsWidget(QWidget):
         #------------------------------------Partition options------------------------------------#
 
         self._partitionOptions = QComboBox()
-        self._partitionOptions.addItems(['Simple Partition', 'Fuzzy Partition', 'Fuzzy Partition (find centers)'])
+        self._partitionOptions.addItems(['Simple Partition', 'Fuzzy Partition'])
 
         partitionLayout = QVBoxLayout()
         partitionLayout.addWidget(self._partitionOptions)
@@ -110,23 +101,17 @@ class SettingsWidget(QWidget):
 
         #------------------------------------Confidence Degree------------------------------------#
 
-        self._confidenceInput = QLineEdit(enabled=False)
+        self._confidenceInput = QLineEdit(enabled=True)
         self._confidenceInput.setPlaceholderText('Confidence degree')
 
         confidenceLayout = QVBoxLayout()
         confidenceLayout.addWidget(self._confidenceInput)
 
-        self._precisionInput = QLineEdit(enabled=False)
+        self._precisionInput = QLineEdit(enabled=True)
         self._precisionInput.setPlaceholderText('Gradient method precision')
 
         precisionLayout = QVBoxLayout()
         precisionLayout.addWidget(self._precisionInput)
-
-        self._centersCountInput = QLineEdit(enabled=False)
-        self._centersCountInput.setPlaceholderText('Centers number')
-
-        centersCountLayout = QVBoxLayout()
-        centersCountLayout.addWidget(self._centersCountInput)
 
         #-----------------------------------------------------------------------------------------#
 
@@ -158,7 +143,6 @@ class SettingsWidget(QWidget):
         settingsLayout.addLayout(distanceLayout)
         settingsLayout.addLayout(confidenceLayout)
         settingsLayout.addLayout(precisionLayout)
-        settingsLayout.addLayout(centersCountLayout)
         settingsLayout.addItem(spacer)
         settingsLayout.addLayout(addCentersLayout)
 
@@ -225,12 +209,6 @@ class PartitionCentralWidget(QWidget):
         if 'simple' in partitionAlgorithm.lower():
             self._boardWidget.startSimplePartition(
                 self._settingsWidget.distance(), self._settingsWidget.freeCoefficients())
-        elif 'centers' in partitionAlgorithm.lower():
-            self._boardWidget.startFuzzyPartitionNotFixedCenters(
-                self._settingsWidget.distance(), 
-                self._settingsWidget.confidence(), 
-                self._settingsWidget.centersNumber(),
-                self._settingsWidget.precision())
         else:
             self._boardWidget.startFuzzyPartition(
                 self._settingsWidget.distance(), 
@@ -248,41 +226,43 @@ class PartitionCentralWidget(QWidget):
         self._boardWidget.toGrayScale()
         self._startPartitionButton.setEnabled(True)
 
-class BoardWidget(QWidget):
+class BoardWidget(QGraphicsView):
 
     CELL_CENTER_COLOR = Qt.black
     CELL_SIMPLE_COLOR = Qt.white
     CELL_SIMPLE_GRAY_COLOR = Qt.gray
     CELL_BOUNDS_COLOR = Qt.black
 
-    def __init__(self, size, cellSize, application, statusBarWidget, *args, **kwargs):
+    def __init__(self, size, cellSize, application, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self._application     = application
-        self._statusBarWidget = statusBarWidget
         self._windowSize      = size
         self._cellSize        = cellSize
         self._board           = dict()
+        self._scene = QGraphicsScene()
+
+        self.setScene(self._scene)
+        self.setFixedSize(self._windowSize * 1.05, self._windowSize * 1.05)
 
         for cellX in range(0, self._windowSize, self._cellSize):
             for cellY in range(0, self._windowSize, self._cellSize):
-                self._board[(cellX, cellY)] = Cell(cellX, cellY, color=self.CELL_SIMPLE_COLOR, parent=self)
-                self._board[(cellX, cellY)].resize(self._cellSize, self._cellSize)
+                self._board[(cellX, cellY)] = Cell(color=self.CELL_SIMPLE_COLOR)
+                self.updateColorAt((cellX, cellY))
 
-        self.setFixedSize(self._windowSize, self._windowSize)
-
-    def mouseEnterEvent(self, cell):
-        newX, newY = cell.x() / self._windowSize, cell.y() / self._windowSize
-        
-        self._statusBarWidget.showMessage('x: {}, y: {}'.format(
-            round(newX, 3), round(newY, 3)))
-
-    def mouseLeaveEvent(self, cell):
-        self._statusBarWidget.showMessage('')
+    def updateColorAt(self, point):
+        rect = QRectF(point[0], point[1], self._cellSize, self._cellSize)
+        self._scene.invalidate(rect)
+        self._scene.addRect(rect, QPen(Qt.black), QBrush(self._board[point].color))
 
     def addCenter(self, x, y):
-        if (x, y) in self._board.keys() and not self._board[(x, y)].isCenter:
-            self._toogleCenter(self._board[(x, y)])
+        if (x, y) in self._board.keys():
+            cell = self._board[(x, y)]
+            if cell.isCenter:
+                return False
+            cell.isCenter = True
+            cell.color    = self.CELL_CENTER_COLOR
+            self.updateColorAt((x, y))
             return True
 
         return False
@@ -313,24 +293,24 @@ class BoardWidget(QWidget):
         self._board[(x, y)].previousColor = self._board[(x, y)].color
         if (self._board[(x, y)].color == self.CELL_SIMPLE_COLOR):
             self._board[(x, y)].color = self.CELL_SIMPLE_GRAY_COLOR
+            self.updateColorAt((x, y))
 
     def markBoundsAsBlack(self, x, y):
         adjecements = self.getExtraneousAdjecements(x, y)
         for point in adjecements:
             if (self._board[point].color != self.CELL_SIMPLE_GRAY_COLOR):
                 self._board[point].color = self.CELL_BOUNDS_COLOR
+                self.updateColorAt(point)
 
     def markRelatedPointAsWhite(self, x, y):
         if (self._board[(x, y)].color != self.CELL_SIMPLE_GRAY_COLOR and self._board[(x, y)].color != self.CELL_BOUNDS_COLOR):
             self._board[(x, y)].color = self.CELL_SIMPLE_COLOR
+            self.updateColorAt((x, y))
 
     def toGrayScale(self):
         self.forEachPoint(self.savePrevColorAndGrayifyNeutralCells)
-        self._application.processEvents()
         self.forEachPoint(self.markBoundsAsBlack)
-        self._application.processEvents()
         self.forEachPoint(self.markRelatedPointAsWhite)
-        self._application.processEvents()
 
     def startSimplePartition(self, distance, freeCoefficients, grayScale=False):
         self._clearBoard()
@@ -352,11 +332,7 @@ class BoardWidget(QWidget):
         for point, center in partition.calculatePartition(distance):
             if center:
                 self._board[point].color = colors[center]
-                pointCounter += 1;
-            if (pointCounter % 20 == 0):
-                self._application.processEvents()
- 
-        self._application.processEvents()
+                self.updateColorAt(point)
  
     def startFuzzyPartition(self, distance, confidenceDeegre, freeCoefficients, precision, grayScale=False):
         self._clearBoard()
@@ -378,24 +354,13 @@ class BoardWidget(QWidget):
         for point, center, _ in partition.calculatePartition(distance):
             if center:
                 self._board[point].color = colors[center]
-                pointCounter += 1;
-            if (pointCounter % 20 == 0):
-                self._application.processEvents()
-
-        self._application.processEvents()
-
-    def startFuzzyPartitionNotFixedCenters(self, distance, confidenceDeegre, centersCount, precision, grayScale=False):
-        return
-
-    def _toogleCenter(self, cell):
-        cell.isCenter = not cell.isCenter
-        cell.color    = self.CELL_CENTER_COLOR if cell.isCenter else self.CELL_SIMPLE_COLOR
+                self.updateColorAt(point)
 
     def _clearBoard(self):
-        for cell in self._board.values():
+        for point, cell in self._board.items():
             if not cell.isCenter:
                 cell.color = self.CELL_SIMPLE_COLOR
-
+                self.updateColorAt(point)
 
 if __name__ == '__main__':
     application = QApplication(sys.argv)
@@ -403,11 +368,11 @@ if __name__ == '__main__':
     mainWindow = QMainWindow()
     mainWindow.setWindowTitle('Partition')
 
-    boardWidget = BoardWidget(WINDOW_SIZE, 5, application, mainWindow.statusBar())
-
+    boardWidget = BoardWidget(WINDOW_SIZE, 5, application)
     settingsWidget = SettingsWidget(boardWidget)
+    centralWidget = PartitionCentralWidget(boardWidget, settingsWidget)
 
-    mainWindow.setCentralWidget(PartitionCentralWidget(boardWidget, settingsWidget))
+    mainWindow.setCentralWidget(centralWidget)
     mainWindow.show()
 
     sys.exit(application.exec_())
