@@ -62,7 +62,6 @@ class SettingsWidget(QWidget):
             self._xCoordinateInput,
             self._yCoordinateInput,
             self._addCenterButton,
-            self._centersCountInput
         ]
 
         activator = {
@@ -172,9 +171,6 @@ class SettingsWidget(QWidget):
     def freeCoefficients(self):
         return { center: float(freeCoefficient.text()) * WINDOW_SIZE
             if freeCoefficient.text() else 0.0 for center, freeCoefficient in self._freeCoefficients.items() }
-
-    def centersNumber(self):
-        return int(self._centersCountInput.text()) if self._centersCountInput.text() else 1
 
 class PartitionCentralWidget(QWidget):
 
