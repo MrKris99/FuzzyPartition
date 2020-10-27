@@ -11,18 +11,20 @@ class BasePartitionAlgorithm:
 
 class BasePartitionWithFixedCentersAlgorithm(BasePartitionAlgorithm):
 
-    def __init__(self, board, centers, freeCoefficients):
+    def __init__(self, board, centers, freeCoefficients, distance, callback):
         super().__init__()
 
         self._board            = board
         self._centers          = centers
         self._freeCoefficients = freeCoefficients
+        self._callback = callback
+        self._distance = distance
 
-    def calculatePartition(self, distance):
+    def calculatePartition(self):
         points = list(point for point in self._board if point not in self._centers)
         for point in points:
-            result = self._calculateForPoint(point, distance)
-            yield result
+            point, center = self._calculateForPoint(point, self._distance)
+            self._callback(point, center)
 
     @abc.abstractmethod
     def _calculateForPoint(self, point, distance):
@@ -31,8 +33,8 @@ class BasePartitionWithFixedCentersAlgorithm(BasePartitionAlgorithm):
 
 class SimplePartitionWithFixedCentersAlgorithm(BasePartitionWithFixedCentersAlgorithm):
 
-    def __init__(self, board, centers, freeCoefficients):
-        super().__init__(board, centers, freeCoefficients)
+    def __init__(self, board, centers, freeCoefficients, distance, callback):
+        super().__init__(board, centers, freeCoefficients, distance, callback)
 
     def _calculateForPoint(self, point, distance):
         def distanceFunction(point, center):
@@ -43,8 +45,8 @@ class SimplePartitionWithFixedCentersAlgorithm(BasePartitionWithFixedCentersAlgo
 
 class FuzzyPartitionWithFixedCentersAlgorithm(BasePartitionWithFixedCentersAlgorithm):
 
-    def __init__(self, board, centers, stepFunction, confidenceDeegre, freeCoefficients, precision=0.01):
-        super().__init__(board, centers, freeCoefficients)
+    def __init__(self, board, centers, stepFunction, confidenceDeegre, freeCoefficients, distance, callback, precision=0.01):
+        super().__init__(board, centers, freeCoefficients, distance, callback)
 
         self._confidenceDeegre = confidenceDeegre
         self._precision        = precision
@@ -77,4 +79,4 @@ class FuzzyPartitionWithFixedCentersAlgorithm(BasePartitionWithFixedCentersAlgor
         maximumMembershipFunction = max(membershipFunctions)
         center                    = self._centers[membershipFunctions.index(maximumMembershipFunction)]
 
-        return point, center if maximumMembershipFunction > self._confidenceDeegre else None, membershipFunctions
+        return point, center if maximumMembershipFunction > self._confidenceDeegre else None

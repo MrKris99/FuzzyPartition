@@ -1,8 +1,9 @@
 import sys
+from threading import Thread
 
 from PySide2.QtWidgets import (QApplication, QPushButton, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QLineEdit, QComboBox, QSplitter, QSpacerItem, QSizePolicy, QGraphicsView, QGraphicsScene)
-from PySide2.QtCore import Slot, Qt, QRectF, QRect
+from PySide2.QtCore import Slot, Qt, QRectF, QRect, Signal
 from PySide2.QtGui import QPen, QBrush
 
 from utils.cell import Cell
@@ -228,18 +229,21 @@ class BoardWidget(QGraphicsView):
     CELL_SIMPLE_COLOR = Qt.white
     CELL_SIMPLE_GRAY_COLOR = Qt.gray
     CELL_BOUNDS_COLOR = Qt.black
+    update_progress = Signal(object)
 
     def __init__(self, size, cellSize, application, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self._application     = application
-        self._windowSize      = size
-        self._cellSize        = cellSize
-        self._board           = dict()
-        self._scene = QGraphicsScene()
+        self._application = application
+        self._windowSize  = size
+        self._cellSize    = cellSize
+        self._board       = dict()
+        self._colors      = dict()
+        self._scene       = QGraphicsScene()
 
         self.setScene(self._scene)
         self.setFixedSize(self._windowSize * 1.05, self._windowSize * 1.05)
+        self.update_progress.connect(self.updateProgress)
 
         for cellX in range(0, self._windowSize, self._cellSize):
             for cellY in range(0, self._windowSize, self._cellSize):
@@ -308,49 +312,38 @@ class BoardWidget(QGraphicsView):
         self.forEachPoint(self.markBoundsAsBlack)
         self.forEachPoint(self.markRelatedPointAsWhite)
 
-    def startSimplePartition(self, distance, freeCoefficients, grayScale=False):
+    @Slot(object)
+    def updateProgress(self, object):
+        point = object[0]
+        center = object[1]
+        if center:
+            self._board[point].color = self._colors[center]
+            self.updateColorAt(point)
+
+    def pointCalculatedCallback(self, point, center):
+        self.update_progress.emit((point, center))
+
+    def startSimplePartition(self, distance, freeCoefficients):
         self._clearBoard()
-
-        centers = [
-            point for point in self._board.keys() if self._board[point].isCenter
-        ]
-
-        board = [
-            point for point in self._board.keys()
-        ]
-
+        centers = [ point for point in self._board.keys() if self._board[point].isCenter]
+        board = [ point for point in self._board.keys()]
         partition = SimplePartitionWithFixedCentersAlgorithm(
-            board, centers, freeCoefficients)
+            board, centers, freeCoefficients, distance, self.pointCalculatedCallback)
 
-        colors = dict(zip(centers, ColorManager.GetRandomColors(len(centers))))
-
-        pointCounter = 0;
-        for point, center in partition.calculatePartition(distance):
-            if center:
-                self._board[point].color = colors[center]
-                self.updateColorAt(point)
+        self._colors = dict(zip(centers, ColorManager.GetRandomColors(len(centers))))
+        thread = Thread(target = partition.calculatePartition)
+        thread.start()
  
-    def startFuzzyPartition(self, distance, confidenceDeegre, freeCoefficients, precision, grayScale=False):
+    def startFuzzyPartition(self, distance, confidenceDeegre, freeCoefficients, precision):
         self._clearBoard()
-
-        centers = [
-            point for point in self._board.keys() if self._board[point].isCenter
-        ]
-
-        board = [
-            point for point in self._board.keys()
-        ]
-
+        centers = [ point for point in self._board.keys() if self._board[point].isCenter]
+        board = [ point for point in self._board.keys()]
         partition = FuzzyPartitionWithFixedCentersAlgorithm(
-            board, centers, SeriesStepFunction(25), confidenceDeegre, freeCoefficients, precision)
+            board, centers, SeriesStepFunction(25), confidenceDeegre, freeCoefficients, distance, self.pointCalculatedCallback, precision)
 
-        colors = dict(zip(centers, ColorManager.GetRandomColors(len(centers))))
-
-        pointCounter = 0;
-        for point, center, _ in partition.calculatePartition(distance):
-            if center:
-                self._board[point].color = colors[center]
-                self.updateColorAt(point)
+        self._colors = dict(zip(centers, ColorManager.GetRandomColors(len(centers))))
+        thread = Thread(target = partition.calculatePartition)
+        thread.start()
 
     def _clearBoard(self):
         for point, cell in self._board.items():
