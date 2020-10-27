@@ -242,6 +242,7 @@ class BoardWidget(QGraphicsView):
         self._scene       = QGraphicsScene()
 
         self.setScene(self._scene)
+        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         self.setFixedSize(self._windowSize * 1.05, self._windowSize * 1.05)
         self.update_progress.connect(self.updateProgress)
 
